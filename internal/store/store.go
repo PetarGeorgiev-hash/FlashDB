@@ -67,7 +67,6 @@ func (s *Store) Get(key string) (*Item, error) {
 	s.mu.RUnlock()
 	return item, nil
 }
-
 // Set implements IStore.
 func (s *Store) Set(key string, value []byte, ttl time.Duration) (*Item, error) {
 	s.mu.Lock()
@@ -88,3 +87,5 @@ func NewStore() IStore {
 		data: make(map[string]*Item, 1),
 	}
 }
+
+
