@@ -29,17 +29,18 @@ type IStore interface {
 	Set(key string, value []byte, ttl time.Duration) (*Item, error)
 	Get(key string) (*Item, error)
 	Delete(key string) error
-	Close() error
+	Close()
 }
 
 type Store struct {
 	data map[string]*Item
 	mu   sync.RWMutex
+	stop chan struct{}
 }
 
 // Close implements IStore.
-func (s *Store) Close() error {
-	panic("unimplemented")
+func (s *Store) Close() {
+	close(s.stop)
 }
 
 // Delete implements IStore.
@@ -83,8 +84,30 @@ func (s *Store) Set(key string, value []byte, ttl time.Duration) (*Item, error) 
 	return item, nil
 }
 
-func NewStore() IStore {
-	return &Store{
-		data: make(map[string]*Item, 1),
+func cleanupExpiredItems(s *Store) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-ticker.C:
+			s.mu.Lock()
+			for item, v := range s.data {
+				if v.IsExpired() {
+					delete(s.data, item)
+				}
+			}
+			s.mu.Unlock()
+		}
 	}
+}
+
+func NewStore() IStore {
+	store := &Store{
+		data: make(map[string]*Item, 1),
+		stop: make(chan struct{}),
+	}
+	go cleanupExpiredItems(store)
+	return store
 }
