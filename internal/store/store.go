@@ -1,9 +1,12 @@
 package internal
 
 import (
+	"hash/fnv"
 	"sync"
 	"time"
 )
+
+const numShards = 16
 
 /*
 	The Item struct represents a key-value pair with an optional time-to-live (TTL) duration.
@@ -32,10 +35,15 @@ type IStore interface {
 	Close()
 }
 
-type Store struct {
+type shard struct {
 	data map[string]*Item
 	mu   sync.RWMutex
-	stop chan struct{}
+}
+
+// Store is an in-memory implementation of the IStore interface.
+type Store struct {
+	shards []*shard
+	stop   chan struct{}
 }
 
 // Close implements IStore.
@@ -45,34 +53,42 @@ func (s *Store) Close() {
 
 // Delete implements IStore.
 func (s *Store) Delete(key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.data, key)
+	index := s.GetShardIndex(key)
+	shard := s.shards[index]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	delete(shard.data, key)
 	return nil
 }
 
 // Get implements IStore.
 func (s *Store) Get(key string) (*Item, error) {
-	s.mu.RLock()
-	item, exists := s.data[key]
+	index := s.GetShardIndex(key)
+	shard := s.shards[index]
+	shard.mu.RLock()
+	item, exists := shard.data[key]
 	if !exists {
+		shard.mu.RUnlock()
 		return nil, nil
 	}
 	if item.IsExpired() {
-		s.mu.RUnlock()
-		s.mu.Lock()
-		delete(s.data, key)
-		s.mu.Unlock()
+		shard.mu.RUnlock()
+		shard.mu.Lock()
+		delete(shard.data, key)
+		shard.mu.Unlock()
 		return nil, nil
 	}
-	s.mu.RUnlock()
+	shard.mu.RUnlock()
 	return item, nil
 }
 
 // Set implements IStore.
 func (s *Store) Set(key string, value []byte, ttl time.Duration) (*Item, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	index := s.GetShardIndex(key)
+	shard := s.shards[index]
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 	item := &Item{
 		Key:   key,
 		Value: value,
@@ -80,7 +96,7 @@ func (s *Store) Set(key string, value []byte, ttl time.Duration) (*Item, error) 
 	if ttl > 0 {
 		item.ExpiresAt = time.Now().Add(ttl)
 	}
-	s.data[item.Key] = item
+	shard.data[key] = item
 	return item, nil
 }
 
@@ -92,22 +108,40 @@ func cleanupExpiredItems(s *Store) {
 		case <-s.stop:
 			return
 		case <-ticker.C:
-			s.mu.Lock()
-			for item, v := range s.data {
-				if v.IsExpired() {
-					delete(s.data, item)
+			for _, shard := range s.shards {
+				shard.mu.Lock()
+				for key, item := range shard.data {
+					if item.IsExpired() {
+						delete(shard.data, key)
+					}
 				}
+				shard.mu.Unlock()
 			}
-			s.mu.Unlock()
 		}
 	}
 }
 
+func (s *Store) GetShardIndex(key string) int {
+	return int(hashKey(key) % uint32(len(s.shards)))
+}
+
 func NewStore() IStore {
 	store := &Store{
-		data: make(map[string]*Item, 1),
-		stop: make(chan struct{}),
+		shards: make([]*shard, numShards),
+		stop:   make(chan struct{}),
 	}
+	for i := range store.shards {
+		store.shards[i] = &shard{
+			data: make(map[string]*Item),
+		}
+	}
+
 	go cleanupExpiredItems(store)
 	return store
+}
+
+func hashKey(key string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return h.Sum32()
 }
