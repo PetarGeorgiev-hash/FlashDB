@@ -40,18 +40,23 @@ type shard struct {
 	mu   sync.RWMutex
 }
 
-// Store is an in-memory implementation of the IStore interface.
+/*
+Store is an in-memory implementation of the IStore interface.
+
+Consists of multiple shards to reduce lock contention and improve concurrency.
+Each shard is a separate map with its own mutex for thread-safe access.
+Including a background goroutine to periodically clean up expired items.
+And a stop channel to signal the cleanup goroutine to stop when the store is closed.
+*/
 type Store struct {
 	shards []*shard
 	stop   chan struct{}
 }
 
-// Close implements IStore.
 func (s *Store) Close() {
 	close(s.stop)
 }
 
-// Delete implements IStore.
 func (s *Store) Delete(key string) error {
 	index := s.GetShardIndex(key)
 	shard := s.shards[index]
@@ -61,7 +66,6 @@ func (s *Store) Delete(key string) error {
 	return nil
 }
 
-// Get implements IStore.
 func (s *Store) Get(key string) (*Item, error) {
 	index := s.GetShardIndex(key)
 	shard := s.shards[index]
@@ -82,7 +86,6 @@ func (s *Store) Get(key string) (*Item, error) {
 	return item, nil
 }
 
-// Set implements IStore.
 func (s *Store) Set(key string, value []byte, ttl time.Duration) (*Item, error) {
 	index := s.GetShardIndex(key)
 	shard := s.shards[index]
@@ -100,6 +103,12 @@ func (s *Store) Set(key string, value []byte, ttl time.Duration) (*Item, error) 
 	return item, nil
 }
 
+/*
+cleanupExpiredItems runs in a background goroutine to periodically remove expired items from the store.
+
+ticker triggers every minute to check each shard for expired items.
+and waits for a stop signal to terminate the goroutine when the store is closed.
+*/
 func cleanupExpiredItems(s *Store) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
