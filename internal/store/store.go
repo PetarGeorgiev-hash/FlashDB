@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"hash/fnv"
 	"sync"
 	"time"
@@ -62,6 +63,9 @@ func (s *Store) Delete(key string) error {
 	shard := s.shards[index]
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+	if _, exists := shard.data[key]; !exists {
+		return fmt.Errorf("key not found")
+	}
 	delete(shard.data, key)
 	return nil
 }

@@ -4,10 +4,9 @@ import (
 	"bufio"
 	"log"
 	"net"
-	"strconv"
 	"strings"
-	"time"
 
+	"github.com/PetarGeorgiev-hash/flashdb/internal/cmd"
 	internal "github.com/PetarGeorgiev-hash/flashdb/internal/store"
 )
 
@@ -36,12 +35,12 @@ func handleConnection(conn net.Conn, store internal.IStore) {
 	reader := bufio.NewReader(conn)
 	for {
 		line, err := reader.ReadString('\n')
-		log.Println(line)
+		addr := conn.RemoteAddr().String()
+		log.Printf("[%s] Received command: %s", addr, line)
 		if err != nil {
 			log.Println("Error reading from connection:", err)
 			return
 		}
-		log.Printf("Received command: %s", line)
 
 		input := strings.TrimSuffix(line, "\r\n")
 		parts := strings.Fields(input)
@@ -49,37 +48,12 @@ func handleConnection(conn net.Conn, store internal.IStore) {
 			continue
 		}
 
-		cmd := strings.ToUpper(parts[0])
-		switch cmd {
-		case "SET":
-			if len(parts) < 3 {
-				conn.Write([]byte("ERR wrong number of arguments for 'SET' command\r\n"))
-				continue
-			}
-			key := parts[1]
-			value := []byte(parts[2])
-			if len(parts) == 4 {
-				seconds, err := strconv.Atoi(parts[3])
-				if err != nil {
-					conn.Write([]byte("Eror invalid expire time\r\n"))
-					continue
-				}
-				_, err = store.Set(key, value, time.Duration(seconds)*time.Second)
-				if err != nil {
-					conn.Write([]byte("Eror failed to set value\r\n"))
-					continue
-				}
-				conn.Write([]byte("OK\r\n"))
+		command := strings.ToUpper(parts[0])
 
-			} else {
-				_, err := store.Set(key, value, 0)
-				if err != nil {
-					conn.Write([]byte("Eror failed to set value\r\n"))
-					continue
-				}
-				conn.Write([]byte("OK\r\n"))
-			}
-
+		if handler, ok := cmd.CommandHandlers[command]; ok {
+			handler(conn, store, parts)
+		} else {
+			conn.Write([]byte("ERR unknown command\r\n"))
 		}
 	}
 
