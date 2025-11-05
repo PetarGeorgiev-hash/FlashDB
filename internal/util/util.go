@@ -1,0 +1,18 @@
+package util
+
+import (
+	"net"
+	"strconv"
+)
+
+func WriteString(conn net.Conn, s string) {
+	conn.Write([]byte("+" + s + "\r\n"))
+}
+
+func WriteError(conn net.Conn, s string) {
+	conn.Write([]byte("-ERR " + s + "\r\n"))
+}
+
+func WriteInteger(conn net.Conn, n int) {
+	conn.Write([]byte(":" + strconv.Itoa(n) + "\r\n"))
+}

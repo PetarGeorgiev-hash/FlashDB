@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/PetarGeorgiev-hash/flashdb/internal/cmd"
+	"github.com/PetarGeorgiev-hash/flashdb/internal/protocol"
 	internal "github.com/PetarGeorgiev-hash/flashdb/internal/store"
 )
 
@@ -32,18 +33,28 @@ func main() {
 func handleConnection(conn net.Conn, store internal.IStore) {
 	defer conn.Close()
 
+	parser := protocol.NewRESPParser()
 	reader := bufio.NewReader(conn)
 	for {
-		line, err := reader.ReadString('\n')
-		addr := conn.RemoteAddr().String()
-		log.Printf("[%s] Received command: %s", addr, line)
+		// line, err := reader.ReadString('\n')
+		// addr := conn.RemoteAddr().String()
+		// log.Printf("[%s] Received command: %s", addr, line)
+		// if err != nil {
+		// 	log.Println("Error reading from connection:", err)
+		// 	return
+		// }
+
+		// input := strings.TrimSuffix(line, "\r\n")
+		// parts := strings.Fields(input)
+		// if len(parts) == 0 {
+		// 	continue
+		// }
+		parts, err := parser.ParseRESP(reader)
 		if err != nil {
 			log.Println("Error reading from connection:", err)
 			return
-		}
 
-		input := strings.TrimSuffix(line, "\r\n")
-		parts := strings.Fields(input)
+		}
 		if len(parts) == 0 {
 			continue
 		}
