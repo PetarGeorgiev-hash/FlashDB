@@ -16,3 +16,7 @@ func WriteError(conn net.Conn, s string) {
 func WriteInteger(conn net.Conn, n int) {
 	conn.Write([]byte(":" + strconv.Itoa(n) + "\r\n"))
 }
+
+const FileVersion = "FDB1"
+const NumShards = 16
+const FileName = "snapshot.fdb"

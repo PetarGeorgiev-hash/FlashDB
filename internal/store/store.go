@@ -1,13 +1,16 @@
 package internal
 
 import (
+	"encoding/binary"
 	"fmt"
 	"hash/fnv"
+	"log"
+	"os"
 	"sync"
 	"time"
-)
 
-const numShards = 16
+	"github.com/PetarGeorgiev-hash/flashdb/internal/util"
+)
 
 /*
 	The Item struct represents a key-value pair with an optional time-to-live (TTL) duration.
@@ -33,6 +36,8 @@ type IStore interface {
 	Set(key string, value []byte, ttl time.Duration) (*Item, error)
 	Get(key string) (*Item, error)
 	Delete(key string) error
+	Save(filename string) error
+	Load(filename string) error
 	Close()
 }
 
@@ -108,6 +113,112 @@ func (s *Store) Set(key string, value []byte, ttl time.Duration) (*Item, error) 
 }
 
 /*
+Save persists the current state of the store to a file.
+
+By iterating over all shards and writing non-expired items to the file in a binary format.
+
+Adding a file version header for compatibility checks during loading.
+Capturing the number of items and writing each item's key, value, and expiration timestamp
+to the file in a structured manner allowing for efficient loading later.
+
+After writing all items, it flushes the file to ensure data integrity.
+*/
+func (s *Store) Save(filename string) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	file.Write([]byte(util.FileVersion))
+
+	items := []*Item{}
+	for _, shard := range s.shards {
+		shard.mu.RLock()
+		for _, item := range shard.data {
+			if !item.IsExpired() {
+				items = append(items, item)
+			}
+		}
+		shard.mu.RUnlock()
+	}
+
+	binary.Write(file, binary.LittleEndian, uint32(len(items)))
+	for _, item := range items {
+		keyBytes := []byte(item.Key)
+		valBytes := item.Value
+		exp := item.ExpiresAt.UnixNano()
+
+		binary.Write(file, binary.LittleEndian, uint32(len(keyBytes)))
+		file.Write(keyBytes)
+		binary.Write(file, binary.LittleEndian, uint32(len(valBytes)))
+		file.Write(valBytes)
+		binary.Write(file, binary.LittleEndian, exp)
+	}
+	return file.Sync()
+
+}
+
+func autoSave(s *Store) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-ticker.C:
+			s.Save(util.FileName)
+		}
+	}
+}
+
+func (s *Store) Load(filename string) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	version := make([]byte, len(util.FileVersion))
+	_, err = file.Read(version)
+	if err != nil {
+		return err
+	}
+
+	if string(version) != util.FileVersion {
+		return fmt.Errorf("incompatible snapshot version")
+	}
+
+	var count uint32
+	binary.Read(file, binary.LittleEndian, &count)
+	for i := 0; i < int(count); i++ {
+
+		var keyLen uint32
+		binary.Read(file, binary.LittleEndian, &keyLen)
+		keyBytes := make([]byte, keyLen)
+		file.Read(keyBytes) // read the key
+
+		var valLen uint32
+		binary.Read(file, binary.LittleEndian, &valLen)
+		valBytes := make([]byte, valLen)
+		file.Read(valBytes) // read the value
+
+		var exp int64
+		binary.Read(file, binary.LittleEndian, &exp)
+		expiresAt := time.Unix(0, exp)
+		if exp > 0 {
+			if time.Now().After(expiresAt) {
+				continue
+			}
+			s.Set(string(keyBytes), valBytes, time.Until(expiresAt))
+		} else {
+			s.Set(string(keyBytes), valBytes, 0)
+		}
+
+	}
+	return nil
+}
+
+/*
 cleanupExpiredItems runs in a background goroutine to periodically remove expired items from the store.
 
 ticker triggers every minute to check each shard for expired items.
@@ -140,7 +251,7 @@ func (s *Store) GetShardIndex(key string) int {
 
 func NewStore() IStore {
 	store := &Store{
-		shards: make([]*shard, numShards),
+		shards: make([]*shard, util.NumShards),
 		stop:   make(chan struct{}),
 	}
 	for i := range store.shards {
@@ -148,8 +259,12 @@ func NewStore() IStore {
 			data: make(map[string]*Item),
 		}
 	}
+	if err := store.Load(util.FileName); err != nil && !os.IsNotExist(err) {
+		log.Printf("No saved snapshots or failed to load them : %v", err)
+	}
 
 	go cleanupExpiredItems(store)
+	go autoSave(store)
 	return store
 }
 
