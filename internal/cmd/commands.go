@@ -17,6 +17,7 @@ const (
 	ExistsCommand = "EXISTS"
 	TTLCommand    = "TTL"
 	ExpireCommand = "EXPIRE"
+	SaveCommand   = "SAVE"
 )
 
 type CommandHandler func(conn net.Conn, store internal.IStore, parts []string)
@@ -29,6 +30,7 @@ var CommandHandlers = map[string]CommandHandler{
 	ExistsCommand: handleExists,
 	TTLCommand:    handleTTL,
 	ExpireCommand: handleExpire,
+	SaveCommand:   handleSave,
 }
 
 func handleSet(conn net.Conn, store internal.IStore, parts []string) {
@@ -174,4 +176,13 @@ func handleExpire(conn net.Conn, store internal.IStore, parts []string) {
 	}
 	item.ExpiresAt = time.Now().Add(time.Duration(seconds) * time.Second)
 	util.WriteInteger(conn, 1) // Expiration set successfully
+}
+
+func handleSave(conn net.Conn, store internal.IStore, parts []string) {
+	err := store.Save(util.FileName)
+	if err != nil {
+		util.WriteError(conn, "failed to save data to disk"+err.Error())
+		return
+	}
+	util.WriteString(conn, "OK")
 }
