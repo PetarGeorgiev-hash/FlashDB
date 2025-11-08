@@ -3,6 +3,7 @@ package util
 import (
 	"net"
 	"strconv"
+	"time"
 )
 
 func WriteString(conn net.Conn, s string) {
@@ -20,3 +21,6 @@ func WriteInteger(conn net.Conn, n int) {
 const FileVersion = "FDB1"
 const NumShards = 16
 const FileName = "snapshot.fdb"
+const AppendFile = "appendonly.aof"
+
+var StartTime = time.Now()
