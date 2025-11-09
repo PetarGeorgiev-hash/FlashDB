@@ -1,39 +1,47 @@
 package cmd
 
 import (
+	"log"
 	"net"
+	"os"
+	"runtime"
 	"strconv"
 	"time"
 
-	internal "github.com/PetarGeorgiev-hash/flashdb/internal/store"
-	"github.com/PetarGeorgiev-hash/flashdb/internal/util"
+	"github.com/PetarGeorgiev-hash/flashdb/aof"
+	internal "github.com/PetarGeorgiev-hash/flashdb/store"
+	"github.com/PetarGeorgiev-hash/flashdb/util"
 )
 
 const (
-	SetCommand    = "SET"
-	GetCommand    = "GET"
-	DelCommand    = "DEL"
-	PingCommand   = "PING"
-	ExistsCommand = "EXISTS"
-	TTLCommand    = "TTL"
-	ExpireCommand = "EXPIRE"
-	SaveCommand   = "SAVE"
+	SetCommand     = "SET"
+	GetCommand     = "GET"
+	DelCommand     = "DEL"
+	PingCommand    = "PING"
+	ExistsCommand  = "EXISTS"
+	TTLCommand     = "TTL"
+	ExpireCommand  = "EXPIRE"
+	SaveCommand    = "SAVE"
+	InfoCommand    = "INFO"
+	CommandCommand = "COMMAND"
 )
 
-type CommandHandler func(conn net.Conn, store internal.IStore, parts []string)
+type CommandHandler func(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF)
 
 var CommandHandlers = map[string]CommandHandler{
-	SetCommand:    handleSet,
-	GetCommand:    handleGet,
-	DelCommand:    handleDel,
-	PingCommand:   handlePing,
-	ExistsCommand: handleExists,
-	TTLCommand:    handleTTL,
-	ExpireCommand: handleExpire,
-	SaveCommand:   handleSave,
+	SetCommand:     handleSet,
+	GetCommand:     handleGet,
+	DelCommand:     handleDel,
+	PingCommand:    handlePing,
+	ExistsCommand:  handleExists,
+	TTLCommand:     handleTTL,
+	ExpireCommand:  handleExpire,
+	SaveCommand:    handleSave,
+	InfoCommand:    handleInfo,
+	CommandCommand: handleCommand,
 }
 
-func handleSet(conn net.Conn, store internal.IStore, parts []string) {
+func handleSet(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
 	if len(parts) < 3 {
 		util.WriteError(conn, "wrong number of arguments for 'SET' command")
 		return
@@ -60,11 +68,15 @@ func handleSet(conn net.Conn, store internal.IStore, parts []string) {
 			util.WriteError(conn, "failed to set value")
 			return
 		}
+		log.Println("sending ok")
 		util.WriteString(conn, "OK")
+	}
+	if err := aofWriter.AppendCommand(parts...); err != nil {
+		log.Printf("[AOF] failed to append command: %v", err)
 	}
 }
 
-func handleGet(conn net.Conn, store internal.IStore, parts []string) {
+func handleGet(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
 	if len(parts) < 2 {
 		util.WriteError(conn, "wrong number of arguments for 'GET' command")
 		return
@@ -79,12 +91,13 @@ func handleGet(conn net.Conn, store internal.IStore, parts []string) {
 		conn.Write([]byte("$-1\r\n"))
 		return
 	}
+
 	conn.Write([]byte("$" + strconv.Itoa(len(item.Value)) + "\r\n"))
 	conn.Write(item.Value)
 	conn.Write([]byte("\r\n"))
 }
 
-func handleDel(conn net.Conn, store internal.IStore, parts []string) {
+func handleDel(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
 	if len(parts) < 2 {
 		util.WriteError(conn, "wrong number of arguments for 'DEL' command")
 		return
@@ -95,18 +108,23 @@ func handleDel(conn net.Conn, store internal.IStore, parts []string) {
 		util.WriteError(conn, "failed to delete key or key mismatch")
 		return
 	}
-	conn.Write([]byte(":1\r\n"))
+	err = aofWriter.AppendCommand(parts...)
+	if err != nil {
+		util.WriteError(conn, "failed to save aof")
+		return
+	}
+	util.WriteInteger(conn, 1)
 }
 
-func handlePing(conn net.Conn, store internal.IStore, parts []string) {
+func handlePing(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
 	if len(parts) == 1 {
-		conn.Write([]byte("PONG\r\n"))
+		util.WriteString(conn, "PONG")
 	} else {
-		conn.Write([]byte(parts[1] + "\r\n"))
+		util.WriteString(conn, parts[1])
 	}
 }
 
-func handleExists(conn net.Conn, store internal.IStore, parts []string) {
+func handleExists(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
 	if len(parts) < 2 {
 		util.WriteError(conn, "wrong number of arguments for 'EXISTS' command")
 		return
@@ -124,7 +142,7 @@ func handleExists(conn net.Conn, store internal.IStore, parts []string) {
 	util.WriteInteger(conn, 1)
 }
 
-func handleTTL(conn net.Conn, store internal.IStore, parts []string) {
+func handleTTL(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
 	if len(parts) < 2 {
 		util.WriteError(conn, "wrong number of arguments for 'TTL' command")
 		return
@@ -152,7 +170,7 @@ func handleTTL(conn net.Conn, store internal.IStore, parts []string) {
 	util.WriteInteger(conn, ttl) // Return TTL in seconds
 }
 
-func handleExpire(conn net.Conn, store internal.IStore, parts []string) {
+func handleExpire(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
 	if len(parts) < 3 {
 		util.WriteError(conn, "wrong number of arguments for 'EXPIRE' command")
 		return
@@ -175,14 +193,46 @@ func handleExpire(conn net.Conn, store internal.IStore, parts []string) {
 		return
 	}
 	item.ExpiresAt = time.Now().Add(time.Duration(seconds) * time.Second)
+	err = aofWriter.AppendCommand(parts...)
+	if err != nil {
+		util.WriteError(conn, "failed to save aof")
+		return
+	}
 	util.WriteInteger(conn, 1) // Expiration set successfully
 }
 
-func handleSave(conn net.Conn, store internal.IStore, parts []string) {
+func handleSave(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
 	err := store.Save(util.FileName)
 	if err != nil {
 		util.WriteError(conn, "failed to save data to disk"+err.Error())
 		return
 	}
+	err = aofWriter.Reset()
+	if err != nil {
+		util.WriteError(conn, "failed to reset the aof file"+err.Error())
+	}
 	util.WriteString(conn, "OK")
+}
+
+func handleInfo(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+	// Simulate Redis INFO output (just minimal subset)
+	uptime := int(time.Since(util.StartTime).Seconds())
+	info := "# Server\r\n" +
+		"redis_version:0.0.1-flashdb\r\n" +
+		"uptime_in_seconds:" + strconv.Itoa(uptime) + "\r\n" +
+		"arch_bits:64\r\n" +
+		"process_id:" + strconv.Itoa(os.Getpid()) + "\r\n" +
+		"go_version:" + runtime.Version() + "\r\n" +
+		"# Memory\r\n" +
+		"mem_allocator:golang\r\n" +
+		"# FlashDB\r\n" +
+		"store_backend:in-memory\r\n"
+
+	conn.Write([]byte("$" + strconv.Itoa(len(info)) + "\r\n"))
+	conn.Write([]byte(info))
+	conn.Write([]byte("\r\n"))
+}
+
+func handleCommand(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+	conn.Write([]byte("*0\r\n"))
 }

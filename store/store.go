@@ -1,4 +1,4 @@
-package internal
+package store
 
 import (
 	"encoding/binary"
@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PetarGeorgiev-hash/flashdb/internal/util"
+	"github.com/PetarGeorgiev-hash/flashdb/util"
 )
 
 /*
@@ -38,6 +38,7 @@ type IStore interface {
 	Delete(key string) error
 	Save(filename string) error
 	Load(filename string) error
+	StopChan() <-chan struct{}
 	Close()
 }
 
@@ -56,11 +57,11 @@ And a stop channel to signal the cleanup goroutine to stop when the store is clo
 */
 type Store struct {
 	shards []*shard
-	stop   chan struct{}
+	Stop   chan struct{}
 }
 
 func (s *Store) Close() {
-	close(s.stop)
+	close(s.Stop)
 }
 
 func (s *Store) Delete(key string) error {
@@ -124,7 +125,8 @@ to the file in a structured manner allowing for efficient loading later.
 After writing all items, it flushes the file to ensure data integrity.
 */
 func (s *Store) Save(filename string) error {
-	file, err := os.Create(filename)
+	tmp := filename + ".tmp"
+	file, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
@@ -154,21 +156,12 @@ func (s *Store) Save(filename string) error {
 		file.Write(valBytes)
 		binary.Write(file, binary.LittleEndian, exp)
 	}
-	return file.Sync()
-
-}
-
-func autoSave(s *Store) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case <-ticker.C:
-			s.Save(util.FileName)
-		}
+	if err := file.Sync(); err != nil {
+		return err
 	}
+
+	return os.Rename(tmp, filename)
+
 }
 
 func (s *Store) Load(filename string) error {
@@ -229,7 +222,7 @@ func cleanupExpiredItems(s *Store) {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-s.stop:
+		case <-s.Stop:
 			return
 		case <-ticker.C:
 			for _, shard := range s.shards {
@@ -249,10 +242,14 @@ func (s *Store) GetShardIndex(key string) int {
 	return int(hashKey(key) % uint32(len(s.shards)))
 }
 
+func (s *Store) StopChan() <-chan struct{} {
+	return s.Stop
+}
+
 func NewStore() IStore {
 	store := &Store{
 		shards: make([]*shard, util.NumShards),
-		stop:   make(chan struct{}),
+		Stop:   make(chan struct{}),
 	}
 	for i := range store.shards {
 		store.shards[i] = &shard{
@@ -264,7 +261,6 @@ func NewStore() IStore {
 	}
 
 	go cleanupExpiredItems(store)
-	go autoSave(store)
 	return store
 }
 
