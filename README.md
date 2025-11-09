@@ -1,3 +1,5 @@
+![GitHub License](https://img.shields.io/github/license/PetarGeorgiev-hash/FlashDB.svg) ![Build Status](https://github.com/PetarGeorgiev-hash/FlashDB/workflows/Tests/badge.svg) [![Go Report Card](https://goreportcard.com/badge/github.com/PetarGeorgiev-hash/flashdb)](https://goreportcard.com/report/github.com/PetarGeorgiev-hash/flashdb)
+
 <p align="center">
   <img src="https://github.com/PetarGeorgiev-hash/flashdb/raw/main/assets/flashdb-logo.png" width="160" alt="FlashDB Logo">
 </p>
@@ -6,21 +8,6 @@
 
 <p align="center">
   <b>High-performance, Redis-compatible in-memory database written in Go.</b>
-</p>
-
-<p align="center">
-  <a href="https://goreportcard.com/report/github.com/PetarGeorgiev-hash/flashdb">
-    <img src="https://goreportcard.com/badge/github.com/PetarGeorgiev-hash/flashdb" alt="Go Report Card">
-  </a>
-  <a href="https://github.com/PetarGeorgiev-hash/flashdb/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/PetarGeorgiev-hash/flashdb/go.yml?label=build&logo=github" alt="Build Status">
-  </a>
-  <a href="https://github.com/PetarGeorgiev-hash/flashdb/releases">
-    <img src="https://img.shields.io/github/v/release/PetarGeorgiev-hash/flashdb?color=blue&label=release" alt="Release">
-  </a>
-  <a href="https://github.com/PetarGeorgiev-hash/flashdb/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/PetarGeorgiev-hash/flashdb" alt="License">
-  </a>
 </p>
 
 ---
