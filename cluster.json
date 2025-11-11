@@ -1,0 +1,7 @@
+{
+  "nodes": [
+    {"id": "node-1", "addr": "127.0.0.1:6379", "role": "master", "slots": [0, 341], "replicas": ["127.0.0.1:7379"]},
+    {"id": "node-2", "addr": "127.0.0.1:6380", "role": "master", "slots": [342, 682], "replicas": ["127.0.0.1:7380"]},
+    {"id": "node-3", "addr": "127.0.0.1:6381", "role": "master", "slots": [683, 1023], "replicas": ["127.0.0.1:7381"]}
+  ]
+}
