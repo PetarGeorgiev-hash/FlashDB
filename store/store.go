@@ -38,6 +38,8 @@ type IStore interface {
 	Delete(key string) error
 	Save(filename string) error
 	Load(filename string) error
+	Import(data map[string][]byte)
+	Export() (map[string][]byte, error)
 	StopChan() <-chan struct{}
 	Close()
 }
@@ -235,6 +237,32 @@ func cleanupExpiredItems(s *Store) {
 				shard.mu.Unlock()
 			}
 		}
+	}
+}
+
+func (s *Store) Export() (map[string][]byte, error) {
+	result := make(map[string][]byte)
+	for _, shard := range s.shards {
+		shard.mu.Lock()
+		for key, item := range shard.data {
+			if item.IsExpired() {
+				continue
+			} else {
+				result[key] = item.Value
+			}
+		}
+		shard.mu.Unlock()
+	}
+	return result, nil
+}
+
+func (s *Store) Import(data map[string][]byte) {
+	for key, item := range data {
+		index := s.GetShardIndex(key)
+		shard := s.shards[index]
+		shard.mu.Lock()
+		shard.data[key] = &Item{Value: item}
+		shard.mu.Unlock()
 	}
 }
 

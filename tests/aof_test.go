@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/PetarGeorgiev-hash/flashdb/aof"
+	"github.com/PetarGeorgiev-hash/flashdb/store"
+	"github.com/PetarGeorgiev-hash/flashdb/util"
 )
 
 func TestAppendAndResetAOF(t *testing.T) {
@@ -35,5 +37,27 @@ func TestAppendAndResetAOF(t *testing.T) {
 	data, _ = os.ReadFile("test.aof")
 	if len(data) != 0 {
 		t.Error("expected empty file after reset")
+	}
+}
+
+func TestAOFReplay(t *testing.T) {
+	s := store.NewStore()
+	a, _ := aof.NewAOF(util.AppendFile)
+	defer os.Remove(util.AppendFile)
+
+	// Write commands
+	s.Set("foo", []byte("bar"), 0)
+	a.AppendCommand("SET", "foo", "bar")
+
+	// Simulate restart
+	s2 := store.NewStore()
+	err := a.LoadAOF(util.AppendFile, s2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item, _ := s2.Get("foo")
+	if string(item.Value) != "bar" {
+		t.Fatalf("expected bar, got %s", item.Value)
 	}
 }
