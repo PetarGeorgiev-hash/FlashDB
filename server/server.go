@@ -14,6 +14,7 @@ import (
 	"github.com/PetarGeorgiev-hash/flashdb/aof"
 	"github.com/PetarGeorgiev-hash/flashdb/cmd"
 	"github.com/PetarGeorgiev-hash/flashdb/protocol"
+	"github.com/PetarGeorgiev-hash/flashdb/replication"
 	"github.com/PetarGeorgiev-hash/flashdb/store"
 	"github.com/PetarGeorgiev-hash/flashdb/util"
 )
@@ -30,13 +31,25 @@ func Start() {
 	}
 
 	store := store.NewStore()
-	// defer store.Close()
 
 	aofWriter, err := aof.NewAOF(util.AppendFile)
 	if err != nil {
 		log.Println(err)
 	}
-	// defer aofWriter.Close()
+
+	var replManager replication.IManager
+	role := os.Getenv("FLASHDB_ROLE")
+	if role == "replica" {
+		masterAddr := os.Getenv("FLASHDB_MASTER_ADDR")
+		go replication.StartReplica(masterAddr, store)
+	} else {
+		replManager = replication.NewManager(store)
+		go listenForReplicas(replManager)
+	}
+	err = aofWriter.LoadAOF(util.AppendFile, store)
+	if err != nil {
+		log.Println(err)
+	}
 
 	go autoSave(store, aofWriter)
 
@@ -63,12 +76,12 @@ func Start() {
 				continue
 			}
 		}
-		go handleConnection(connection, store, aofWriter)
+		go handleConnection(connection, store, aofWriter, replManager)
 	}
 
 }
 
-func handleConnection(conn net.Conn, store store.IStore, aofWriter aof.IAOF) {
+func handleConnection(conn net.Conn, store store.IStore, aofWriter aof.IAOF, replManager replication.IManager) {
 	defer conn.Close()
 
 	parser := protocol.NewRESPParser()
@@ -88,7 +101,7 @@ func handleConnection(conn net.Conn, store store.IStore, aofWriter aof.IAOF) {
 		command := strings.ToUpper(parts[0])
 
 		if handler, ok := cmd.CommandHandlers[command]; ok {
-			handler(conn, store, parts, aofWriter)
+			handler(conn, store, parts, aofWriter, replManager)
 		} else {
 			conn.Write([]byte("-ERR unknown command\r\n"))
 		}
@@ -111,5 +124,22 @@ func autoSave(s store.IStore, aof aof.IAOF) {
 				log.Printf("[autosave] AOF reset failed: %v", err)
 			}
 		}
+	}
+}
+
+func listenForReplicas(m replication.IManager) {
+	ln, err := net.Listen("tcp", ":7390") // replication port
+	if err != nil {
+		log.Printf("replication listener failed: %v", err)
+		return
+	}
+	log.Println("[replication] listening on port 7390 for replicas...")
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Println("[replication] accept error:", err)
+			continue
+		}
+		go m.HandleReplicationConn(conn)
 	}
 }

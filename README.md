@@ -89,8 +89,11 @@ go test -v -race ./...
 
 We welcome contributions!
 If you’d like to add new commands, improve performance, or enhance documentation:
-
+    
 1.Fork the repository
+
 2.Create a new feature branch
+
 3.Submit a pull request
+
 !Please ensure all tests pass before submitting!

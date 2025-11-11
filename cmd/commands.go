@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PetarGeorgiev-hash/flashdb/aof"
+	"github.com/PetarGeorgiev-hash/flashdb/replication"
 	internal "github.com/PetarGeorgiev-hash/flashdb/store"
 	"github.com/PetarGeorgiev-hash/flashdb/util"
 )
@@ -26,7 +27,7 @@ const (
 	CommandCommand = "COMMAND"
 )
 
-type CommandHandler func(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF)
+type CommandHandler func(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager)
 
 var CommandHandlers = map[string]CommandHandler{
 	SetCommand:     handleSet,
@@ -41,7 +42,7 @@ var CommandHandlers = map[string]CommandHandler{
 	CommandCommand: handleCommand,
 }
 
-func handleSet(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleSet(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	if len(parts) < 3 {
 		util.WriteError(conn, "wrong number of arguments for 'SET' command")
 		return
@@ -74,9 +75,11 @@ func handleSet(conn net.Conn, store internal.IStore, parts []string, aofWriter a
 	if err := aofWriter.AppendCommand(parts...); err != nil {
 		log.Printf("[AOF] failed to append command: %v", err)
 	}
+	// TODO: check if the command is comming from replica replManager == nil pointer and will crash
+	replManager.Broadcast(parts)
 }
 
-func handleGet(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleGet(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	if len(parts) < 2 {
 		util.WriteError(conn, "wrong number of arguments for 'GET' command")
 		return
@@ -97,7 +100,7 @@ func handleGet(conn net.Conn, store internal.IStore, parts []string, aofWriter a
 	conn.Write([]byte("\r\n"))
 }
 
-func handleDel(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleDel(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	if len(parts) < 2 {
 		util.WriteError(conn, "wrong number of arguments for 'DEL' command")
 		return
@@ -114,9 +117,10 @@ func handleDel(conn net.Conn, store internal.IStore, parts []string, aofWriter a
 		return
 	}
 	util.WriteInteger(conn, 1)
+	replManager.Broadcast(parts)
 }
 
-func handlePing(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handlePing(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	if len(parts) == 1 {
 		util.WriteString(conn, "PONG")
 	} else {
@@ -124,7 +128,7 @@ func handlePing(conn net.Conn, store internal.IStore, parts []string, aofWriter 
 	}
 }
 
-func handleExists(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleExists(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	if len(parts) < 2 {
 		util.WriteError(conn, "wrong number of arguments for 'EXISTS' command")
 		return
@@ -142,7 +146,7 @@ func handleExists(conn net.Conn, store internal.IStore, parts []string, aofWrite
 	util.WriteInteger(conn, 1)
 }
 
-func handleTTL(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleTTL(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	if len(parts) < 2 {
 		util.WriteError(conn, "wrong number of arguments for 'TTL' command")
 		return
@@ -168,9 +172,10 @@ func handleTTL(conn net.Conn, store internal.IStore, parts []string, aofWriter a
 		return
 	}
 	util.WriteInteger(conn, ttl) // Return TTL in seconds
+
 }
 
-func handleExpire(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleExpire(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	if len(parts) < 3 {
 		util.WriteError(conn, "wrong number of arguments for 'EXPIRE' command")
 		return
@@ -199,9 +204,10 @@ func handleExpire(conn net.Conn, store internal.IStore, parts []string, aofWrite
 		return
 	}
 	util.WriteInteger(conn, 1) // Expiration set successfully
+	replManager.Broadcast(parts)
 }
 
-func handleSave(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleSave(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	err := store.Save(util.FileName)
 	if err != nil {
 		util.WriteError(conn, "failed to save data to disk"+err.Error())
@@ -214,7 +220,7 @@ func handleSave(conn net.Conn, store internal.IStore, parts []string, aofWriter 
 	util.WriteString(conn, "OK")
 }
 
-func handleInfo(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleInfo(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	// Simulate Redis INFO output (just minimal subset)
 	uptime := int(time.Since(util.StartTime).Seconds())
 	info := "# Server\r\n" +
@@ -233,6 +239,6 @@ func handleInfo(conn net.Conn, store internal.IStore, parts []string, aofWriter 
 	conn.Write([]byte("\r\n"))
 }
 
-func handleCommand(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF) {
+func handleCommand(conn net.Conn, store internal.IStore, parts []string, aofWriter aof.IAOF, replManager replication.IManager) {
 	conn.Write([]byte("*0\r\n"))
 }
